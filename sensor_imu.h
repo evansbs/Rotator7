@@ -5,19 +5,39 @@
 #include <Wire.h>
 
 struct IMUData {
-  // LSM303-style accelerometer data, expressed in g.
   float ax, ay, az;
-
-  // LSM303-style magnetometer data.
-  // These are left as raw / relative values so the caller can apply
-  // calibration, scaling, or heading math as needed.
   float mx, my, mz;
 };
 
-// Initialize the LSM303DLHC-style accelerometer + magnetometer pair.
-bool initIMU();
+struct IMUVector3 {
+  float i;
+  float j;
+  float k;
+};
 
-// Read one combined accelerometer + magnetometer sample into `data`.
-bool readIMU(IMUData &data);
+struct IMUCalibration {
+  float md;      // magnetic declination in degrees
+  IMUVector3 me; // magnetometer offset
+  IMUVector3 ge; // gyro offset (unused on accel+mag hardware)
+  IMUVector3 ms; // magnetometer scale
+  IMUVector3 gs; // gyro scale (unused on accel+mag hardware)
+};
+
+class SensorIMU {
+public:
+  SensorIMU();
+
+  bool begin();
+  bool read();
+  void getAzEl();
+  bool calibrate();
+  void calStart();
+
+  IMUCalibration cal;
+  float ax, ay, az;
+  float mx, my, mz;
+  float azimuth;
+  float elevation;
+};
 
 #endif
