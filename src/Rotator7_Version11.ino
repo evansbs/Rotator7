@@ -21,11 +21,9 @@ const int gndPin = 12;
 const int azGain = 25;
 const float azAlpha = 0.5;
 
-// EL is NOT hard-disabled in this build.
-// The code will fault-safe on IMU failure, but EL pins remain available.
 const bool HARD_DISABLE_EL = false;
 
-enum Modes {tracking, monitoring, demonstrating, calibrating, debugging, pausing, faulted};
+enum Modes { tracking, monitoring, demonstrating, calibrating, debugging, pausing, faulted };
 
 float az;
 float el;
@@ -66,11 +64,6 @@ void releaseEl() {
   pinMode(elFwdPin, OUTPUT);
   pinMode(elRevPin, OUTPUT);
   pinMode(elBrkPin, OUTPUT);
-}
-
-void printError(const char *msg) {
-  SerialPort.print("ERR ");
-  SerialPort.println(msg);
 }
 
 void printDebug(void) {
@@ -215,34 +208,37 @@ void getAzElError(float *azError, float *elError, bool *windup, float *azSet, fl
 }
 
 void processPosition() {
-  imu.read();
+  if (!imu.read()) {
+    enterFault("IMU read failed");
+    return;
+  }
+
+  if (!imuOk) {
+    enterFault("IMU read invalid");
+    return;
+  }
+
+  imu.getAzEl();
+  az = imu.azimuth;
+  el = imu.elevation;
+  getWindup(&windup, &azWindup, &azOffset, &azLast, &elLast, az, elSet);
+  if (mode == demonstrating) getAzElDemo(&azSet, &elSet, &azInc, &elInc);
+  getAzElError(&azError, &elError, &windup, &azSet, elSet, az, el);
 
   switch (mode) {
     case debugging:
       printDebug();
       break;
-
     case calibrating:
       calibrate();
       break;
-
+    case monitoring:
+      printMon(az, el, azSet, elSet, azWindup, azError, elError);
+      break;
     case pausing:
     case faulted:
-      azMot.halt();
       break;
-
     default:
-      if (!imuOk) {
-        enterFault("IMU read invalid");
-        break;
-      }
-      imu.getAzEl();
-      az = imu.azimuth;
-      el = imu.elevation;
-      getWindup(&windup, &azWindup, &azOffset, &azLast, &elLast, az, elSet);
-      if (mode == demonstrating) getAzElDemo(&azSet, &elSet, &azInc, &elInc);
-      getAzElError(&azError, &elError, &windup, &azSet, elSet, az, el);
-      if (mode == monitoring) printMon(az, el, azSet, elSet, azWindup, azError, elError);
       break;
   }
 }
@@ -274,26 +270,19 @@ void processUserCommands(String cmd) {
   switch (command) {
     case 'r':
       SerialPort.println("ACK reset");
-      if (imuOk) {
-        reset(true);
-      } else {
-        reset(false);
-      }
+      reset(imuOk);
       break;
-
     case 'b':
       SerialPort.println("ACK debug");
       mode = debugging;
       t1.reset(100);
       break;
-
     case 'm':
       SerialPort.println("ACK monitor");
       if (imuOk) mode = monitoring;
       else enterFault("Cannot monitor: IMU not ready");
       t1.reset(100);
       break;
-
     case 'c':
       if (!imuOk) {
         SerialPort.println("ERR IMU not ready");
@@ -305,27 +294,23 @@ void processUserCommands(String cmd) {
       mode = calibrating;
       t1.reset(50);
       break;
-
     case 'a':
       SerialPort.println("ACK abort");
       mode = pausing;
       t1.reset(100);
       if (imuOk) reset(true);
       break;
-
     case 'e':
       param = cmd.substring(1);
       imu.cal.md = param.toFloat();
       SerialPort.print("ACK MagDecl=");
       SerialPort.println(imu.cal.md, 2);
       break;
-
     case 's':
       save();
       if (imuOk) reset(true);
       SerialPort.println("ACK save");
       break;
-
     case 'd':
       if (!imuOk) {
         SerialPort.println("ERR IMU not ready");
@@ -336,7 +321,6 @@ void processUserCommands(String cmd) {
       t1.reset(50);
       mode = demonstrating;
       break;
-
     case 'h':
       SerialPort.println("Commands:");
       SerialPort.println("az el -(0..360 0..90)");
@@ -351,7 +335,6 @@ void processUserCommands(String cmd) {
       SerialPort.println("p -Pause");
       SerialPort.println("EL drive remains enabled in this build unless faulted.");
       break;
-
     case 'p':
       if (mode == pausing) {
         if (imuOk) {
@@ -366,11 +349,9 @@ void processUserCommands(String cmd) {
         SerialPort.println("ACK pause");
       }
       break;
-
     case 'J':
       SerialPort.println("ACK JOG ignored");
       break;
-
     default:
       firstSpace = cmd.indexOf(' ');
       if (firstSpace > 0) {
@@ -427,32 +408,24 @@ void setup() {
   digitalWrite(azFwdPin, LOW);
   digitalWrite(azRevPin, LOW);
 
-  if (HARD_DISABLE_EL) {
-    forceElSafe();
-  } else {
-    releaseEl();
-  }
+  if (HARD_DISABLE_EL) forceElSafe();
+  else releaseEl();
 
   SerialPort.begin(9600);
   delay(200);
   SerialPort.println("BOOT start");
 
-  if (!imu.begin()) {
+  imuOk = imu.begin();
+  if (!imuOk) {
     SerialPort.println("ERR IMU init failed");
-    imuOk = false;
     mode = faulted;
   } else {
     SerialPort.println("BOOT IMU init complete");
-    imuOk = true;
     mode = tracking;
   }
 
   reset(true);
-  if (imuOk) {
-    SerialPort.println("BOOT ready");
-  } else {
-    SerialPort.println("BOOT faulted");
-  }
+  SerialPort.println(imuOk ? "BOOT ready" : "BOOT faulted");
 }
 
 void loop() {
