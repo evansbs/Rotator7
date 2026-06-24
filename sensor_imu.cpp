@@ -52,20 +52,41 @@ bool SensorIMU::begin() {
   Serial.print("IMU PROBE MAG ");
   Serial.println(probeAddr(MAG_ADDR) ? "OK" : "FAIL");
 
-  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG1_A, 0x27)) return false;
-  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG4_A, 0x00)) return false;
+  // Try to bring up the accelerometer even if the magnetometer is flaky.
+  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG1_A, 0x27)) {
+    Serial.println("IMU ACC CTRL1 write failed");
+    return false;
+  }
+  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG4_A, 0x00)) {
+    Serial.println("IMU ACC CTRL4 write failed");
+    return false;
+  }
 
+  // Magnetometer init is more tolerant: report problems, but don't immediately
+  // fail if the device is present yet returns an unexpected ID.
   uint8_t id[3] = {0, 0, 0};
-  if (!readRegs(MAG_ADDR, MAG_IRA_REG_M, id, 3)) return false;
-  Serial.print("IMU MAG ID ");
-  Serial.print(id[0], HEX); Serial.print(" ");
-  Serial.print(id[1], HEX); Serial.print(" ");
-  Serial.println(id[2], HEX);
-  if (id[0] != 0x48 || id[1] != 0x34 || id[2] != 0x33) return false;
+  if (readRegs(MAG_ADDR, MAG_IRA_REG_M, id, 3)) {
+    Serial.print("IMU MAG ID ");
+    Serial.print(id[0], HEX); Serial.print(" ");
+    Serial.print(id[1], HEX); Serial.print(" ");
+    Serial.println(id[2], HEX);
 
-  if (!writeReg(MAG_ADDR, MAG_MR_REG_M, 0x00)) return false;
-  if (!writeReg(MAG_ADDR, MAG_CRB_REG_M, 0x20)) return false;
-  if (!writeReg(MAG_ADDR, MAG_CRA_REG_M, 0x14)) return false;
+    if (id[0] != 0x48 || id[1] != 0x34 || id[2] != 0x33) {
+      Serial.println("IMU MAG ID unexpected; continuing anyway");
+    }
+  } else {
+    Serial.println("IMU MAG ID read failed; continuing with accel-only fallback");
+  }
+
+  if (!writeReg(MAG_ADDR, MAG_MR_REG_M, 0x00)) {
+    Serial.println("IMU MAG MR write failed");
+  }
+  if (!writeReg(MAG_ADDR, MAG_CRB_REG_M, 0x20)) {
+    Serial.println("IMU MAG CRB write failed");
+  }
+  if (!writeReg(MAG_ADDR, MAG_CRA_REG_M, 0x14)) {
+    Serial.println("IMU MAG CRA write failed");
+  }
 
   Serial.println("IMU init complete");
   return true;
@@ -87,28 +108,23 @@ bool SensorIMU::read() {
   az = (float)raw_az / 16384.0f;
 
   uint8_t mag[6];
-  if (!readRegs(MAG_ADDR, MAG_OUT_X_H_M, mag, 6)) {
-    Serial.println("IMU MAG read failed");
-    return false;
+  if (readRegs(MAG_ADDR, MAG_OUT_X_H_M, mag, 6)) {
+    int16_t raw_mx = (int16_t)((uint16_t)mag[0] << 8 | mag[1]);
+    int16_t raw_mz = (int16_t)((uint16_t)mag[2] << 8 | mag[3]);
+    int16_t raw_my = (int16_t)((uint16_t)mag[4] << 8 | mag[5]);
+
+    mx = (float)raw_mx;
+    my = (float)raw_my;
+    mz = (float)raw_mz;
+  } else {
+    // Fallback: keep last magnetometer readings instead of hard-failing.
+    Serial.println("IMU MAG read failed; using last magnetometer values");
   }
-
-  int16_t raw_mx = (int16_t)((uint16_t)mag[0] << 8 | mag[1]);
-  int16_t raw_mz = (int16_t)((uint16_t)mag[2] << 8 | mag[3]);
-  int16_t raw_my = (int16_t)((uint16_t)mag[4] << 8 | mag[5]);
-
-  mx = (float)raw_mx;
-  my = (float)raw_my;
-  mz = (float)raw_mz;
 
   return true;
 }
 
 void SensorIMU::getAzEl() {
-  // Adafruit 10DOF-style tilt compensation:
-  // 1) derive roll/pitch from accelerometer
-  // 2) rotate magnetometer into the horizontal plane
-  // 3) compute heading from the compensated magnetic vector
-
   const float PI_F = 3.14159265f;
 
   float roll = atan2(ay, az);
@@ -119,7 +135,6 @@ void SensorIMU::getAzEl() {
   float cosPitch = cos(pitch);
   float sinPitch = sin(pitch);
 
-  // Tilt-compensated magnetic field components
   float magXh = mx * cosPitch + mz * sinPitch;
   float magYh = mx * sinRoll * sinPitch + my * cosRoll - mz * sinRoll * cosPitch;
 
@@ -129,9 +144,6 @@ void SensorIMU::getAzEl() {
   if (headingDeg >= 360.0f) headingDeg -= 360.0f;
 
   azimuth = headingDeg;
-
-  // Elevation: use the tilt angle from the accelerometer as a simple sky/tilt estimate.
-  // This keeps the existing az/el sketch structure intact.
   elevation = pitch * 180.0f / PI_F;
   if (elevation < 0) elevation = -elevation;
 }
