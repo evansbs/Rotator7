@@ -6,7 +6,7 @@
 
 struct IMUData {
   float ax, ay, az; // Acceleration in g
-  float gx, gy, gz; // Temporary reuse for magnetometer vector
+  float mx, my, mz; // Magnetic field raw units / relative values
 };
 
 bool initIMU();
