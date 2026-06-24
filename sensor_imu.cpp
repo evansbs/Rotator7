@@ -52,42 +52,20 @@ bool SensorIMU::begin() {
   Serial.print("IMU PROBE MAG ");
   Serial.println(probeAddr(MAG_ADDR) ? "OK" : "FAIL");
 
-  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG1_A, 0x27)) {
-    Serial.println("IMU ACC CTRL1 write failed");
-    return false;
-  }
-  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG4_A, 0x00)) {
-    Serial.println("IMU ACC CTRL4 write failed");
-    return false;
-  }
+  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG1_A, 0x27)) return false;
+  if (!writeReg(ACCEL_ADDR, ACC_CTRL_REG4_A, 0x00)) return false;
 
   uint8_t id[3] = {0, 0, 0};
-  if (!readRegs(MAG_ADDR, MAG_IRA_REG_M, id, 3)) {
-    Serial.println("IMU MAG ID read failed");
-    return false;
-  }
+  if (!readRegs(MAG_ADDR, MAG_IRA_REG_M, id, 3)) return false;
   Serial.print("IMU MAG ID ");
   Serial.print(id[0], HEX); Serial.print(" ");
   Serial.print(id[1], HEX); Serial.print(" ");
   Serial.println(id[2], HEX);
+  if (id[0] != 0x48 || id[1] != 0x34 || id[2] != 0x33) return false;
 
-  if (id[0] != 0x48 || id[1] != 0x34 || id[2] != 0x33) {
-    Serial.println("IMU MAG ID mismatch");
-    return false;
-  }
-
-  if (!writeReg(MAG_ADDR, MAG_MR_REG_M, 0x00)) {
-    Serial.println("IMU MAG MR write failed");
-    return false;
-  }
-  if (!writeReg(MAG_ADDR, MAG_CRB_REG_M, 0x20)) {
-    Serial.println("IMU MAG CRB write failed");
-    return false;
-  }
-  if (!writeReg(MAG_ADDR, MAG_CRA_REG_M, 0x14)) {
-    Serial.println("IMU MAG CRA write failed");
-    return false;
-  }
+  if (!writeReg(MAG_ADDR, MAG_MR_REG_M, 0x00)) return false;
+  if (!writeReg(MAG_ADDR, MAG_CRB_REG_M, 0x20)) return false;
+  if (!writeReg(MAG_ADDR, MAG_CRA_REG_M, 0x14)) return false;
 
   Serial.println("IMU init complete");
   return true;
@@ -126,21 +104,36 @@ bool SensorIMU::read() {
 }
 
 void SensorIMU::getAzEl() {
-  float headingDeg = atan2(my, mx) * 180.0f / PI;
+  // Adafruit 10DOF-style tilt compensation:
+  // 1) derive roll/pitch from accelerometer
+  // 2) rotate magnetometer into the horizontal plane
+  // 3) compute heading from the compensated magnetic vector
+
+  const float PI_F = 3.14159265f;
+
+  float roll = atan2(ay, az);
+  float pitch = atan(-ax / (ay * sin(roll) + az * cos(roll)));
+
+  float cosRoll = cos(roll);
+  float sinRoll = sin(roll);
+  float cosPitch = cos(pitch);
+  float sinPitch = sin(pitch);
+
+  // Tilt-compensated magnetic field components
+  float magXh = mx * cosPitch + mz * sinPitch;
+  float magYh = mx * sinRoll * sinPitch + my * cosRoll - mz * sinRoll * cosPitch;
+
+  float headingDeg = atan2(magYh, magXh) * 180.0f / PI_F;
   headingDeg += cal.md;
   if (headingDeg < 0) headingDeg += 360.0f;
   if (headingDeg >= 360.0f) headingDeg -= 360.0f;
+
   azimuth = headingDeg;
 
-  float accelMag = sqrt(ax * ax + ay * ay + az * az);
-  if (accelMag > 0.0f) {
-    float normZ = az / accelMag;
-    if (normZ > 1.0f) normZ = 1.0f;
-    if (normZ < -1.0f) normZ = -1.0f;
-    elevation = acos(normZ) * 180.0f / PI;
-  } else {
-    elevation = 0.0f;
-  }
+  // Elevation: use the tilt angle from the accelerometer as a simple sky/tilt estimate.
+  // This keeps the existing az/el sketch structure intact.
+  elevation = pitch * 180.0f / PI_F;
+  if (elevation < 0) elevation = -elevation;
 }
 
 bool SensorIMU::calibrate() { return false; }
