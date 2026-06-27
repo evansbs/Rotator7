@@ -22,7 +22,6 @@ const int azGain = 25;
 const float azAlpha = 0.5;
 
 const bool HARD_DISABLE_EL = false;
-
 const int EEPROM_BASE = 0;
 
 enum Modes { tracking, monitoring, demonstrating, calibrating, debugging, pausing, faulted };
@@ -78,39 +77,44 @@ void releaseEl() {
 }
 
 void printDebug(void) {
-  NanoIMU::Vec3f a = imu.getAccelOffset();
-  NanoIMU::Vec3f as = imu.getAccelScale();
-  NanoIMU::Vec3f m = imu.getMagOffset();
-  NanoIMU::Vec3f ms = imu.getMagScale();
+  NanoIMU::Vec3f accOff = imu.getAccelOffset();
+  NanoIMU::Vec3f accScale = imu.getAccelScale();
+  NanoIMU::Vec3f magOff = imu.getMagOffset();
+  NanoIMU::Vec3f magScale = imu.getMagScale();
 
   SerialPort.print("DBG ");
-  SerialPort.print(imu.getDeclinationDeg(), 1); SerialPort.print(",");
-  SerialPort.print(imu.getAccelOffset().x, 3); SerialPort.print(",");
-  SerialPort.print(imu.getAccelOffset().y, 3); SerialPort.print(",");
-  SerialPort.print(imu.getAccelOffset().z, 3); SerialPort.print(",");
-  SerialPort.print(imu.getAccelScale().x, 3); SerialPort.print(",");
-  SerialPort.print(imu.getAccelScale().y, 3); SerialPort.print(",");
-  SerialPort.print(imu.getAccelScale().z, 3); SerialPort.print(",");
-  SerialPort.print(imu.getMagOffset().x, 3); SerialPort.print(",");
-  SerialPort.print(imu.getMagOffset().y, 3); SerialPort.print(",");
-  SerialPort.print(imu.getMagOffset().z, 3); SerialPort.print(",");
-  SerialPort.print(imu.getMagScale().x, 3); SerialPort.print(",");
-  SerialPort.print(imu.getMagScale().y, 3); SerialPort.print(",");
-  SerialPort.println(imu.getMagScale().z, 3);
+  SerialPort.print(imu.getDeclinationDeg(), 2); SerialPort.print(",");
+  SerialPort.print(accOff.x, 3); SerialPort.print(",");
+  SerialPort.print(accOff.y, 3); SerialPort.print(",");
+  SerialPort.print(accOff.z, 3); SerialPort.print(",");
+  SerialPort.print(accScale.x, 3); SerialPort.print(",");
+  SerialPort.print(accScale.y, 3); SerialPort.print(",");
+  SerialPort.print(accScale.z, 3); SerialPort.print(",");
+  SerialPort.print(magOff.x, 3); SerialPort.print(",");
+  SerialPort.print(magOff.y, 3); SerialPort.print(",");
+  SerialPort.print(magOff.z, 3); SerialPort.print(",");
+  SerialPort.print(magScale.x, 3); SerialPort.print(",");
+  SerialPort.print(magScale.y, 3); SerialPort.print(",");
+  SerialPort.println(magScale.z, 3);
 }
 
 void printCal(void) {
+  NanoIMU::Vec3f accOff = imu.getAccelOffset();
+  NanoIMU::Vec3f accScale = imu.getAccelScale();
+  NanoIMU::Vec3f magOff = imu.getMagOffset();
+  NanoIMU::Vec3f magScale = imu.getMagScale();
+
   SerialPort.print("CAL ");
   SerialPort.print(imu.getDeclinationDeg(), 1); SerialPort.print(",");
-  SerialPort.print(imu.getMagOffset().x, 1); SerialPort.print(",");
-  SerialPort.print(imu.getMagOffset().y, 1); SerialPort.print(",");
-  SerialPort.print(imu.getMagOffset().z, 1); SerialPort.print(",");
+  SerialPort.print(accOff.x, 1); SerialPort.print(",");
+  SerialPort.print(accOff.y, 1); SerialPort.print(",");
+  SerialPort.print(accOff.z, 1); SerialPort.print(",");
   SerialPort.print(0.0f, 1); SerialPort.print(",");
   SerialPort.print(0.0f, 1); SerialPort.print(",");
   SerialPort.print(0.0f, 1); SerialPort.print(",");
-  SerialPort.print(imu.getMagScale().x, 1); SerialPort.print(",");
-  SerialPort.print(imu.getMagScale().y, 1); SerialPort.print(",");
-  SerialPort.print(imu.getMagScale().z, 1); SerialPort.print(",");
+  SerialPort.print(magScale.x, 1); SerialPort.print(",");
+  SerialPort.print(magScale.y, 1); SerialPort.print(",");
+  SerialPort.print(magScale.z, 1); SerialPort.print(",");
   SerialPort.print(1.0f, 1); SerialPort.print(",");
   SerialPort.print(1.0f, 1); SerialPort.print(",");
   SerialPort.println(1.0f, 1);
@@ -201,9 +205,9 @@ void calibrate() {
   }
 
   NanoIMU::Vec3f magOffset, magScale;
+  SerialPort.println("CAL rotate sensor slowly...");
   if (imu.calibrateMagMinMax(180, 20, magOffset, magScale)) {
     imu.setMagCalibration(magOffset, magScale);
-    imu.setDeclinationDeg(imu.getDeclinationDeg());
     calDirty = true;
     digitalWrite(spkPin, HIGH);
     printCal();
@@ -238,7 +242,8 @@ void getAzElError(float *azError, float *elError, bool *windup, float *azSet, fl
 }
 
 void processPosition() {
-  if (!imu.readAccel( *(NanoIMU::Vec3f*)&imu.ax )) {
+  NanoIMU::Vec3f acc;
+  if (!imu.readAccel(acc)) {
     enterFault("IMU read failed");
     return;
   }
@@ -261,14 +266,7 @@ void processPosition() {
   }
 
   azimuthDeg = headingDeg;
-  elevationDeg = 0.0f;
-
-  NanoIMU::Vec3f a;
-  if (!imu.readAccel(a)) {
-    enterFault("IMU accel read failed");
-    return;
-  }
-  elevationDeg = atan2(a.x, sqrt(a.y * a.y + a.z * a.z)) * 180.0f / PI;
+  elevationDeg = atan2(acc.x, sqrt(acc.y * acc.y + acc.z * acc.z)) * 180.0f / PI;
   if (elevationDeg < 0) elevationDeg = -elevationDeg;
 
   getWindup(&windup, &azimuthWindupDeg, &azimuthOffsetDeg, &lastAzimuthDeg, &lastElevationDeg, azimuthDeg, elevationSetpointDeg);
@@ -397,7 +395,7 @@ void processUserCommands(String cmd) {
       SerialPort.println("m -Monitor");
       SerialPort.println("p -Pause");
       SerialPort.println("EL drive remains enabled in this build unless faulted.");
-      SerialPort.println("IMU is accel + mag only; no gyro is present.");
+      SerialPort.println("IMU uses NanoIMU accel + mag; no gyro is present.");
       break;
 
     case 'p':
